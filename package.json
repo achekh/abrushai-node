@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "func start",
     "build": "tsc && npm run copy-files",
-    "copy-files": "powershell -Command \"Copy-Item -Path 'host.json' -Destination 'dist/' -Force; Copy-Item -Path '.funcignore' -Destination 'dist/' -Force; Copy-Item -Path 'src/functions/*/function.json' -Destination 'dist/functions/' -Force -Recurse\"",
+    "copy-files": "cp host.json dist/ && cp .funcignore dist/ && find src/functions -name 'function.json' -exec cp {} dist/functions/ \\;",
     "start": "func start",
     "preview": "vite preview"
   },
