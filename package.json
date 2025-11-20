@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "func start",
-    "build": "tsc",
+    "build": "tsc && npm run copy-files",
+    "copy-files": "powershell -Command \"Copy-Item -Path 'host.json' -Destination 'dist/' -Force; Copy-Item -Path '.funcignore' -Destination 'dist/' -Force; Copy-Item -Path 'src/functions/*/function.json' -Destination 'dist/functions/' -Force -Recurse\"",
     "start": "func start",
     "preview": "vite preview"
   },
