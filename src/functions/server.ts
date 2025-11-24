@@ -15,22 +15,35 @@ const corsOptions = {
   maxAge: 86400
 };
 
-// Helper to get CORS headers based on request origin
-function getCorsHeaders(requestOrigin?: string | null): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Max-Age': '86400'
-  };
+// Create CORS middleware
+const corsMiddleware = cors(corsOptions);
 
-  // Only add Allow-Origin if request is from allowed origin
-  if (requestOrigin === corsOptions.origin) {
-    headers['Access-Control-Allow-Origin'] = corsOptions.origin;
-    headers['Access-Control-Allow-Credentials'] = 'true';
-  }
+// Helper to apply CORS middleware to a request/response pair
+async function applyCors(req: HttpRequest): Promise<Record<string, string>> {
+  return new Promise((resolve) => {
+    const nodeReq = {
+      method: req.method,
+      headers: Object.fromEntries(
+        Array.from(req.headers.entries())
+      )
+    } as any;
 
-  return headers;
+    const nodeRes = {
+      statusCode: 200,
+      headers: {} as Record<string, string>,
+      setHeader: (key: string, value: string | string[]) => {
+        nodeRes.headers[key] = Array.isArray(value) ? value.join(', ') : value;
+      },
+      end: () => {
+        nodeRes.headers['Content-Type'] = nodeRes.headers['Content-Type'] || 'application/json';
+        resolve(nodeRes.headers);
+      }
+    };
+
+    corsMiddleware(nodeReq, nodeRes, () => {
+      nodeRes.end();
+    });
+  });
 }
 
 // Google Sheets API setup
@@ -53,15 +66,24 @@ async function parseJson(req: HttpRequest): Promise<FormData | null> {
   }
 }
 
+// OPTIONS handler for CORS preflight requests
+async function optionsHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  context.log('Handling preflight request');
+  const headers = await applyCors(req);
+
+  return {
+    status: 204,
+    headers
+  };
+}
+
 // POST /api/submit-form handler
 async function submitFormHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Processing form submission');
-  const origin = req.headers.get('origin');
 
   try {
     const formData = await parseJson(req);
-    const headers = getCorsHeaders(origin);
-    headers['Content-Type'] = 'application/json';
+    const headers = await applyCors(req);
     
     if (!formData || Object.keys(formData).length === 0) {
       return {
@@ -96,8 +118,7 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
     };
   } catch (error) {
     context.error('Error submitting form data:', error);
-    const headers = getCorsHeaders(origin);
-    headers['Content-Type'] = 'application/json';
+    const headers = await applyCors(req);
     
     return {
       status: 500,
@@ -114,9 +135,7 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
 // GET /api/health handler
 async function healthHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Health check request');
-  const origin = req.headers.get('origin');
-  const headers = getCorsHeaders(origin);
-  headers['Content-Type'] = 'application/json';
+  const headers = await applyCors(req);
 
   return {
     status: 200,
@@ -129,17 +148,28 @@ async function healthHandler(req: HttpRequest, context: InvocationContext): Prom
   };
 }
 
+
 // Register individual functions
 app.http('submitForm', {
-  methods: ['POST'],
+  methods: ['POST', 'OPTIONS'],
   authLevel: 'anonymous',
   route: 'api/submit-form',
-  handler: submitFormHandler
+  handler: (req, context) => {
+    if (req.method === 'OPTIONS') {
+      return optionsHandler(req, context);
+    }
+    return submitFormHandler(req, context);
+  }
 });
 
 app.http('health', {
-  methods: ['GET'],
+  methods: ['GET', 'OPTIONS'],
   authLevel: 'anonymous',
   route: 'api/health',
-  handler: healthHandler
+  handler: (req, context) => {
+    if (req.method === 'OPTIONS') {
+      return optionsHandler(req, context);
+    }
+    return healthHandler(req, context);
+  }
 });
