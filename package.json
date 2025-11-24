@@ -2,7 +2,7 @@
   "name": "abrush-ai-functions",
   "private": true,
   "version": "0.0.0",
-  "main": "./dist/src/functions/*.js",
+  "main": "./dist/functions/*.js",
   "scripts": {
     "dev": "func start",
     "build": "tsc",

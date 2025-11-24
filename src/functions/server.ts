@@ -1,4 +1,4 @@
-import { HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -82,10 +82,10 @@ expressApp.get('/', (req: express.Request, res: express.Response) => {
 });
 
 // Azure Functions HTTP trigger handler
-export default async function handler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+async function httpHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log(`Http function processed request for url "${req.url}"`);
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const responseHeaders: Record<string, string> = {
       'Content-Type': 'application/json'
     };
@@ -129,3 +129,10 @@ export default async function handler(req: HttpRequest, context: InvocationConte
     expressApp(req as any, res);
   });
 }
+
+// Register HTTP trigger using app object (Azure Functions v4)
+app.http('HttpTrigger', {
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  authLevel: 'anonymous',
+  handler: httpHandler
+});
