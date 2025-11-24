@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@azure/functions": "^4.9.0",
+    "cors": "^2.8.5",
     "googleapis": "^126.0.1"
   },
   "devDependencies": {

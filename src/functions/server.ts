@@ -1,9 +1,36 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import cors from 'cors';
 import { google } from 'googleapis';
 
 // Define form data interface
 interface FormData {
   [key: string]: string | number | boolean;
+}
+
+// CORS configuration for the allowed origin
+const corsOptions = {
+  origin: 'https://red-sea-0ab736403.3.azurestaticapps.net',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  maxAge: 86400
+};
+
+// Helper to get CORS headers based on request origin
+function getCorsHeaders(requestOrigin?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400'
+  };
+
+  // Only add Allow-Origin if request is from allowed origin
+  if (requestOrigin === corsOptions.origin) {
+    headers['Access-Control-Allow-Origin'] = corsOptions.origin;
+    headers['Access-Control-Allow-Credentials'] = 'true';
+  }
+
+  return headers;
 }
 
 // Google Sheets API setup
@@ -29,14 +56,17 @@ async function parseJson(req: HttpRequest): Promise<FormData | null> {
 // POST /api/submit-form handler
 async function submitFormHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Processing form submission');
+  const origin = req.headers.get('origin');
 
   try {
     const formData = await parseJson(req);
+    const headers = getCorsHeaders(origin);
+    headers['Content-Type'] = 'application/json';
     
     if (!formData || Object.keys(formData).length === 0) {
       return {
         status: 400,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ success: false, message: 'No form data provided' })
       };
     }
@@ -57,7 +87,7 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
 
     return {
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         success: true,
         message: 'Form data successfully added to Google Sheets',
@@ -66,9 +96,12 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
     };
   } catch (error) {
     context.error('Error submitting form data:', error);
+    const headers = getCorsHeaders(origin);
+    headers['Content-Type'] = 'application/json';
+    
     return {
       status: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         success: false,
         message: 'Failed to submit form data',
@@ -81,32 +114,17 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
 // GET /api/health handler
 async function healthHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Health check request');
+  const origin = req.headers.get('origin');
+  const headers = getCorsHeaders(origin);
+  headers['Content-Type'] = 'application/json';
 
   return {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       success: true,
       message: 'Azure Function is healthy',
       timestamp: new Date().toISOString()
-    })
-  };
-}
-
-// GET / handler
-async function rootHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
-  context.log('Root endpoint accessed');
-
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      success: true,
-      message: 'Form submission service is running',
-      endpoints: {
-        healthCheck: 'GET /api/health',
-        submitForm: 'POST /api/submit-form'
-      }
     })
   };
 }
@@ -124,11 +142,4 @@ app.http('health', {
   authLevel: 'anonymous',
   route: 'api/health',
   handler: healthHandler
-});
-
-app.http('root', {
-  methods: ['GET'],
-  authLevel: 'anonymous',
-  route: '',
-  handler: rootHandler
 });
