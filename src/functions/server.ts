@@ -6,28 +6,11 @@ interface FormData {
   [key: string]: string | number | boolean;
 }
 
-// CORS configuration for the allowed origin
-const ALLOWED_ORIGIN = 'https://red-sea-0ab736403.3.azurestaticapps.net';
-const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
-const ALLOWED_HEADERS = ['Content-Type', 'Authorization'];
-const MAX_AGE = '86400';
-
-// Helper to get CORS headers
-function getCorsHeaders(origin?: string | null): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Methods': ALLOWED_METHODS.join(', '),
-    'Access-Control-Allow-Headers': ALLOWED_HEADERS.join(', '),
-    'Access-Control-Max-Age': MAX_AGE
+// Helper to get response headers with Content-Type
+function getResponseHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json'
   };
-
-  // Only add Allow-Origin if request is from allowed origin
-  if (origin === ALLOWED_ORIGIN) {
-    headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN;
-    headers['Access-Control-Allow-Credentials'] = 'true';
-  }
-
-  return headers;
 }
 
 // Google Sheets API setup
@@ -50,26 +33,57 @@ async function parseJson(req: HttpRequest): Promise<FormData | null> {
   }
 }
 
-// OPTIONS handler for CORS preflight requests
-async function optionsHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
-  context.log('Handling preflight request');
-  const origin = req.headers.get('origin');
-  const headers = getCorsHeaders(origin);
+// Verify reCAPTCHA token with Google
+async function verifyRecaptcha(token: string, context: InvocationContext): Promise<{ success: boolean; score?: number; action?: string; error?: string }> {
+  const secretKey = process.env.RECAPTCHA_SECRET_KEY;
+  
+  if (!secretKey) {
+    context.error('RECAPTCHA_SECRET_KEY environment variable is not set');
+    return { success: false, error: 'reCAPTCHA not configured' };
+  }
 
-  return {
-    status: 204,
-    headers
-  };
+  if (!token) {
+    return { success: false, error: 'No reCAPTCHA token provided' };
+  }
+
+  try {
+    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: `secret=${secretKey}&response=${token}`
+    });
+
+    const data = await response.json() as any;
+    
+    context.log('reCAPTCHA verification response:', { success: data.success, score: data.score, action: data.action });
+
+    if (!data.success) {
+      return { success: false, error: 'reCAPTCHA verification failed' };
+    }
+
+    // Check score threshold (0.0 to 1.0, where 1.0 is very likely legitimate)
+    const scoreThreshold = parseFloat(process.env.RECAPTCHA_SCORE_THRESHOLD || '0.5');
+    if (data.score < scoreThreshold) {
+      context.warn(`reCAPTCHA score ${data.score} below threshold ${scoreThreshold}`);
+      return { success: false, error: 'reCAPTCHA score too low (likely bot activity)' };
+    }
+
+    return { success: true, score: data.score, action: data.action };
+  } catch (error) {
+    context.error('Error verifying reCAPTCHA:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'reCAPTCHA verification error' };
+  }
 }
 
 // POST /api/submit-form handler
 async function submitFormHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Processing form submission');
-  const origin = req.headers.get('origin');
+  const headers = getResponseHeaders();
 
   try {
     const formData = await parseJson(req);
-    const headers = getCorsHeaders(origin);
     
     if (!formData || Object.keys(formData).length === 0) {
       return {
@@ -79,9 +93,34 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
       };
     }
 
-    context.log('Received form data:', formData);
+    context.log('Received form data');
     
-    const values = [Object.values(formData)];
+    // Extract and verify reCAPTCHA token
+    const recaptchaToken = formData.recaptchaToken as string;
+    const recaptchaVerification = await verifyRecaptcha(recaptchaToken, context);
+    
+    if (!recaptchaVerification.success) {
+      return {
+        status: 400,
+        headers,
+        body: JSON.stringify({ 
+          success: false, 
+          message: recaptchaVerification.error || 'reCAPTCHA verification failed'
+        })
+      };
+    }
+
+    context.log(`reCAPTCHA verification passed (score: ${recaptchaVerification.score})`);
+    
+    // Filter out recaptchaToken before writing to Google Sheets
+    const filteredData = Object.entries(formData)
+      .filter(([key]) => key !== 'recaptchaToken')
+      .reduce((acc, [key, value]) => {
+        acc[key] = value;
+        return acc;
+      }, {} as FormData);
+    
+    const values = [Object.values(filteredData)];
     const sheets = setupGoogleSheets();
     
     const response = await sheets.spreadsheets.values.append({
@@ -104,7 +143,6 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
     };
   } catch (error) {
     context.error('Error submitting form data:', error);
-    const headers = getCorsHeaders(origin);
     
     return {
       status: 500,
@@ -121,8 +159,7 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
 // GET /api/health handler
 async function healthHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Health check request');
-  const origin = req.headers.get('origin');
-  const headers = getCorsHeaders(origin);
+  const headers = getResponseHeaders();
 
   return {
     status: 200,
@@ -138,25 +175,15 @@ async function healthHandler(req: HttpRequest, context: InvocationContext): Prom
 
 // Register individual functions
 app.http('submitForm', {
-  methods: ['POST', 'OPTIONS'],
+  methods: ['POST'],
   authLevel: 'anonymous',
   route: 'api/submit-form',
-  handler: (req, context) => {
-    if (req.method === 'OPTIONS') {
-      return optionsHandler(req, context);
-    }
-    return submitFormHandler(req, context);
-  }
+  handler: submitFormHandler
 });
 
 app.http('health', {
-  methods: ['GET', 'OPTIONS'],
+  methods: ['GET'],
   authLevel: 'anonymous',
   route: 'api/health',
-  handler: (req, context) => {
-    if (req.method === 'OPTIONS') {
-      return optionsHandler(req, context);
-    }
-    return healthHandler(req, context);
-  }
+  handler: healthHandler
 });
