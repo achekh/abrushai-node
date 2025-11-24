@@ -1,5 +1,4 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import cors from 'cors';
 import { google } from 'googleapis';
 
 // Define form data interface
@@ -8,42 +7,27 @@ interface FormData {
 }
 
 // CORS configuration for the allowed origin
-const corsOptions = {
-  origin: 'https://red-sea-0ab736403.3.azurestaticapps.net',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true,
-  maxAge: 86400
-};
+const ALLOWED_ORIGIN = 'https://red-sea-0ab736403.3.azurestaticapps.net';
+const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+const ALLOWED_HEADERS = ['Content-Type', 'Authorization'];
+const MAX_AGE = '86400';
 
-// Create CORS middleware
-const corsMiddleware = cors(corsOptions);
+// Helper to get CORS headers
+function getCorsHeaders(origin?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Methods': ALLOWED_METHODS.join(', '),
+    'Access-Control-Allow-Headers': ALLOWED_HEADERS.join(', '),
+    'Access-Control-Max-Age': MAX_AGE
+  };
 
-// Helper to apply CORS middleware to a request/response pair
-async function applyCors(req: HttpRequest): Promise<Record<string, string>> {
-  return new Promise((resolve) => {
-    const nodeReq = {
-      method: req.method,
-      headers: Object.fromEntries(
-        Array.from(req.headers.entries())
-      )
-    } as any;
+  // Only add Allow-Origin if request is from allowed origin
+  if (origin === ALLOWED_ORIGIN) {
+    headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN;
+    headers['Access-Control-Allow-Credentials'] = 'true';
+  }
 
-    const nodeRes = {
-      statusCode: 200,
-      headers: {} as Record<string, string>,
-      setHeader: (key: string, value: string | string[]) => {
-        nodeRes.headers[key] = Array.isArray(value) ? value.join(', ') : value;
-      },
-      end: () => {
-        nodeRes.headers['Content-Type'] = nodeRes.headers['Content-Type'] || 'application/json';
-        resolve(nodeRes.headers);
-      }
-    };
-
-    corsMiddleware(nodeReq, nodeRes, () => {
-      nodeRes.end();
-    });
-  });
+  return headers;
 }
 
 // Google Sheets API setup
@@ -69,7 +53,8 @@ async function parseJson(req: HttpRequest): Promise<FormData | null> {
 // OPTIONS handler for CORS preflight requests
 async function optionsHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Handling preflight request');
-  const headers = await applyCors(req);
+  const origin = req.headers.get('origin');
+  const headers = getCorsHeaders(origin);
 
   return {
     status: 204,
@@ -80,10 +65,11 @@ async function optionsHandler(req: HttpRequest, context: InvocationContext): Pro
 // POST /api/submit-form handler
 async function submitFormHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Processing form submission');
+  const origin = req.headers.get('origin');
 
   try {
     const formData = await parseJson(req);
-    const headers = await applyCors(req);
+    const headers = getCorsHeaders(origin);
     
     if (!formData || Object.keys(formData).length === 0) {
       return {
@@ -118,7 +104,7 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
     };
   } catch (error) {
     context.error('Error submitting form data:', error);
-    const headers = await applyCors(req);
+    const headers = getCorsHeaders(origin);
     
     return {
       status: 500,
@@ -135,7 +121,8 @@ async function submitFormHandler(req: HttpRequest, context: InvocationContext): 
 // GET /api/health handler
 async function healthHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('Health check request');
-  const headers = await applyCors(req);
+  const origin = req.headers.get('origin');
+  const headers = getCorsHeaders(origin);
 
   return {
     status: 200,
