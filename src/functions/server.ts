@@ -134,5 +134,6 @@ async function httpHandler(req: HttpRequest, context: InvocationContext): Promis
 app.http('HttpTrigger', {
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   authLevel: 'anonymous',
+  "route": "{*route}",
   handler: httpHandler
 });
