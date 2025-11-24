@@ -3,8 +3,6 @@
 .git
 .gitignore
 .vscode
-node_modules
-local.settings.json
 test
 tests
 src
@@ -13,7 +11,6 @@ package-lock.json
 .env
 public
 .DS_Store
-dist
 .funcignore
 README.md
 vite.config.ts

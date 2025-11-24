@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "dist/functions/*.js",
   "scripts": {
     "dev": "func start",
-    "build": "tsc && npm run copy-files",
-    "copy-files": "cp host.json dist/ && cp .funcignore dist/ && find src/functions -name 'function.json' -exec cp {} dist/functions/ \\;",
+    "build": "tsc",
     "start": "func start",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "clean": "rimraf dist"
   },
   "dependencies": {
     "@azure/functions": "^4.9.0",

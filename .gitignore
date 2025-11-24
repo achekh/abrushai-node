@@ -10,7 +10,7 @@ dist/
 local.settings.json
 
 # IDE
-.vscode/
+
 .idea/
 *.swp
 *.swo
