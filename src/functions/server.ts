@@ -1,17 +1,5 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import express from 'express';
-import cors from 'cors';
-import morgan from 'morgan';
 import { google } from 'googleapis';
-
-// Create Express app
-const expressApp = express();
-
-// Setup middleware
-expressApp.use(cors());
-expressApp.use(morgan('dev'));
-expressApp.use(express.json());
-expressApp.use(express.urlencoded({ extended: true }));
 
 // Define form data interface
 interface FormData {
@@ -28,112 +16,119 @@ const setupGoogleSheets = () => {
   return google.sheets({ version: 'v4', auth });
 };
 
-// Endpoint 1: Handle form submissions
-expressApp.post('/api/submit-form', async (req: express.Request, res: express.Response) => {
+// Helper function to parse JSON body
+async function parseJson(req: HttpRequest): Promise<FormData | null> {
   try {
-    const formData: FormData = req.body;
+    const bodyText = await req.text();
+    return bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    return null;
+  }
+}
+
+// POST /api/submit-form handler
+async function submitFormHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  context.log('Processing form submission');
+
+  try {
+    const formData = await parseJson(req);
+    
     if (!formData || Object.keys(formData).length === 0) {
-      return res.status(400).json({ success: false, message: 'No form data provided' });
+      return {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: false, message: 'No form data provided' })
+      };
     }
-    console.log('Received form data:', formData);
+
+    context.log('Received form data:', formData);
+    
     const values = [Object.values(formData)];
     const sheets = setupGoogleSheets();
+    
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID,
       range: 'Sheet1!A:Z',
       valueInputOption: 'USER_ENTERED',
       requestBody: { values }
     });
-    console.log('Sheets API response:', response.data);
-    return res.status(200).json({ 
-      success: true, 
-      message: 'Form data successfully added to Google Sheets',
-      updatedRows: response.data.updates?.updatedRows || 0
-    });
-  } catch (error) {
-    console.error('Error submitting form data:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to submit form data',
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
 
-// Endpoint 2: Health check / status endpoint
-expressApp.get('/api/health', (req: express.Request, res: express.Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'Azure Function is healthy',
-    timestamp: new Date().toISOString()
-  });
-});
+    context.log('Sheets API response:', response.data);
 
-// Root endpoint
-expressApp.get('/', (req: express.Request, res: express.Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'Form submission service is running',
-    endpoints: {
-      healthCheck: 'GET /api/health',
-      submitForm: 'POST /api/submit-form'
-    }
-  });
-});
-
-// Azure Functions HTTP trigger handler
-async function httpHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
-  context.log(`Http function processed request for url "${req.url}"`);
-
-  return new Promise((resolve) => {
-    const responseHeaders: Record<string, string> = {
-      'Content-Type': 'application/json'
+    return {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        message: 'Form data successfully added to Google Sheets',
+        updatedRows: response.data.updates?.updatedRows || 0
+      })
     };
-
-    const res = {
-      statusCode: 200,
-      headers: responseHeaders,
-      body: '',
-      status: (code: number) => {
-        res.statusCode = code;
-        return res;
-      },
-      json: (data: any) => {
-        res.body = JSON.stringify(data);
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: res.body
-        });
-      },
-      send: (data: any) => {
-        res.body = typeof data === 'string' ? data : JSON.stringify(data);
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: res.body
-        });
-      },
-      setHeader: (key: string, value: string) => {
-        res.headers[key] = value;
-      },
-      end: () => {
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: res.body
-        });
-      }
-    } as any;
-
-    expressApp(req as any, res);
-  });
+  } catch (error) {
+    context.error('Error submitting form data:', error);
+    return {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        message: 'Failed to submit form data',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    };
+  }
 }
 
-// Register HTTP trigger using app object (Azure Functions v4)
-app.http('HttpTrigger', {
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+// GET /api/health handler
+async function healthHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  context.log('Health check request');
+
+  return {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      success: true,
+      message: 'Azure Function is healthy',
+      timestamp: new Date().toISOString()
+    })
+  };
+}
+
+// GET / handler
+async function rootHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  context.log('Root endpoint accessed');
+
+  return {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      success: true,
+      message: 'Form submission service is running',
+      endpoints: {
+        healthCheck: 'GET /api/health',
+        submitForm: 'POST /api/submit-form'
+      }
+    })
+  };
+}
+
+// Register individual functions
+app.http('submitForm', {
+  methods: ['POST'],
   authLevel: 'anonymous',
-  "route": "{*route}",
-  handler: httpHandler
+  route: 'api/submit-form',
+  handler: submitFormHandler
+});
+
+app.http('health', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'api/health',
+  handler: healthHandler
+});
+
+app.http('root', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: '',
+  handler: rootHandler
 });
